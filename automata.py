@@ -122,3 +122,89 @@ print(f"EC2 instance {instance.id} registered with the target group.")
 
 # Add a delay to allow the ALB to be fully provisioned
 time.sleep(60)
+
+
+# Auto Scaling Group configuration
+asg_name = 'neeraj-asg'
+min_size = 2
+max_size = 5
+desired_capacity = 2
+cooldown = 300  # cooldown period in seconds
+
+# Launch Configuration configuration
+lc_name = 'neeraj-lc'
+instance_type = 't2.micro'
+key_name = 'neeraj-key-pair'
+security_groups = ['sg-neeraj']
+
+# Scaling policies configuration
+scale_out_policy_name = 'neeraj-scale-out-policy'
+scale_in_policy_name = 'neeraj-scale-in-policy'
+
+# CloudWatch metric configuration
+scale_out_threshold = 80
+scale_in_threshold = 20
+
+# Create ASG client
+autoscaling = boto3.client('autoscaling', aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, region_name=region)
+
+# Create Launch Configuration
+lc_response = autoscaling.create_launch_configuration(
+    LaunchConfigurationName=lc_name,
+    ImageId=ec2_ami_id,  # Amazon Linux AMI, for example
+    InstanceType=instance_type,
+    KeyName=key_name,
+    SecurityGroups=security_groups,
+)
+
+# Create Auto Scaling Group
+asg_response = autoscaling.create_auto_scaling_group(
+    AutoScalingGroupName=neeraj-ASG,
+    LaunchConfigurationName=lc_name,
+    MinSize=min_size,
+    MaxSize=max_size,
+    DesiredCapacity=desired_capacity,
+    Cooldown=cooldown,
+    VPCZoneIdentifier='subnet-id-1,subnet-id-2',  # Replace with your subnet IDs
+    Tags=[
+        {
+            'Key': 'Name',
+            'Value': asg_name,
+            'PropagateAtLaunch': True
+        },
+    ]
+)
+
+# Create scale-out policy
+scale_out_policy = autoscaling.put_scaling_policy(
+    AutoScalingGroupName=neeraj-asg,
+    PolicyName=scale_out_policy_name,
+    PolicyType='TargetTrackingScaling',
+    TargetTrackingConfiguration={
+        'PredefinedMetricSpecification': {
+            'PredefinedMetricType': 'ASGAverageCPUUtilization',
+        },
+        'TargetValue': scale_out_threshold,
+    }
+)
+
+# Create scale-in policy
+scale_in_policy = autoscaling.put_scaling_policy(
+    AutoScalingGroupName=neeraj-asg,
+    PolicyName=scale_in_policy_name,
+    PolicyType='TargetTrackingScaling',
+    TargetTrackingConfiguration={
+        'PredefinedMetricSpecification': {
+            'PredefinedMetricType': 'ASGAverageCPUUtilization',
+        },
+        'TargetValue': scale_in_threshold,
+    }
+)
+
+# Add a delay to allow the ASG to be fully provisioned
+time.sleep(60)
+
+print(f"Auto Scaling Group {asg_name} created with scaling policies.")
+
+
+
