@@ -204,6 +204,97 @@ scale_in_policy = autoscaling.put_scaling_policy(
 # Add a delay to allow the ASG to be fully provisioned
 time.sleep(60)
 
+# S3 bucket configuration
+neeraj_snapshot_bucket_name = 'neeraj-snapshot-bucket'
+
+# SNS topic configuration
+neeraj_sns_topic_arn = 'arn:aws:sns:your-region:your-account-id:your-sns-topic'
+
+# Create clients
+ec2_client = boto3.client('ec2', aws_access_key_id=neeraj_access_key_id, aws_secret_access_key=neeraj_secret_access_key, region_name=region)
+elbv2_client = boto3.client('elbv2', aws_access_key_id=neeraj_access_key_id, aws_secret_access_key=neeraj_secret_access_key, region_name=region)
+sns_client = boto3.client('sns', aws_access_key_id=neeraj_access_key_id, aws_secret_access_key=neeraj_secret_access_key, region_name=region)
+
+def lambda_handler(event, context):
+    # Get ALB ARN
+    alb_response = elbv2_client.describe_load_balancers(Names=[neeraj_alb_name])
+    alb_arn = alb_response['LoadBalancers'][0]['LoadBalancerArn']
+
+    # Get unhealthy targets
+    targets_response = elbv2_client.describe_target_health(TargetGroupArn=alb_arn)
+    unhealthy_targets = [target['Target']['Id'] for target in targets_response['TargetHealthDescriptions'] if target['TargetHealth']['State'] == 'unhealthy']
+
+    if unhealthy_targets:
+        print(f"Unhealthy targets: {unhealthy_targets}")
+
+        for instance_id in unhealthy_targets:
+            # Capture a snapshot of the failing instance
+            snapshot_response = ec2_client.create_snapshot(
+                Description=f"Snapshot for instance {instance_id}",
+                VolumeId=get_volume_id(instance_id),
+            )
+            snapshot_id = snapshot_response['SnapshotId']
+            print(f"Snapshot {snapshot_id} created for instance {instance_id}")
+
+            # Terminate the problematic instance
+            ec2_client.terminate_instances(InstanceIds=[instance_id])
+            print(f"Instance {instance_id} terminated")
+
+            # Send a notification through SNS
+            message = f"Instance {instance_id} was terminated due to health check failure. Snapshot ID: {snapshot_id}"
+            sns_client.publish(TopicArn=neeraj_sns_topic_arn, Message=message, Subject="Web Application Health Check")
+
+def get_volume_id(instance_id):
+    # Get the root volume ID of the instance
+    volumes_response = ec2_client.describe_volumes(Filters=[{'Name': 'attachment.instance-id', 'Values': [instance_id]}])
+    volume_id = volumes_response['Volumes'][0]['VolumeId']
+    return volume_id
+
+
+
+neeraj_s3_bucket_name = 'neeraj-logs-bucket'
+
+# Create clients
+
+def configure_alb_logging():
+    # Get ALB ARN
+    alb_response = elbv2_client.describe_load_balancers(Names=[neeraj_alb_name])
+    alb_arn = alb_response['LoadBalancers'][0]['LoadBalancerArn']
+
+    # Enable access logs for ALB
+    elbv2_client.modify_load_balancer_attributes(
+        LoadBalancerArn=alb_arn,
+        Attributes=[
+            {
+                'Key': 'access_logs.s3.enabled',
+                'Value': 'true',
+            },
+            {
+                'Key': 'access_logs.s3.bucket',
+                'Value': neeraj_s3_bucket_name,
+            },
+        ]
+    )
+    print(f"Access logging enabled for ALB {neeraj_alb_name}. Logs will be stored in S3 bucket {neeraj_s3_bucket_name}.")
+
+def lambda_handler(event, context):
+    # Perform log analysis on the newly added log file
+    bucket = event['Records'][0]['s3']['bucket']['name']
+    key = event['Records'][0]['s3']['object']['key']
+
+    # Perform log analysis here (e.g., check for suspicious activities)
+
+    # Example: Send a notification if suspicious activity is detected
+    if neeraj_suspicious_activity_detected():
+        message = f"Suspicious activity detected in S3 bucket {bucket}. Log file: {key}"
+        sns_client.publish(TopicArn=neeraj_sns_topic_arn, Message=message, Subject="ALB Log Analysis Alert")
+
+def neeraj_suspicious_activity_detected():
+    # Implement your logic for detecting suspicious activity
+    # This is a placeholder, replace it with your actual logic
+    return True
+
+
 print(f"Auto Scaling Group {asg_name} created with scaling policies.")
 
 
